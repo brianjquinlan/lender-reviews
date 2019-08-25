@@ -13,7 +13,6 @@ def create_app():
     init_db()
     api = Api(app)
 
-
     @app.teardown_appcontext
     def shutdown_session(exception=None):
         db_session.remove()

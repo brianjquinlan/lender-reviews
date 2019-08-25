@@ -56,6 +56,44 @@ class ReviewsResource(Resource):
         pass
 
 
+def build_review_object(review, url):
+    review_object = dict()
+    review_object['lender_name'] = url.split('/')[5]
+    review_object['title'] = review.find('p', {'class': 'reviewTitle'}).text.strip()
+    review_object['author'] = review.find('p', {'class': 'consumerName'}).text.strip()
+
+    # parse date into datetime object, format is always the same month/year
+    date_string = review.find(
+        'p', {'class': 'consumerReviewDate'}).text.split('in ')[1].strip()
+    review_object['date_of_review'] = parser.parse(date_string, default=default_date)
+
+    review_object['content'] = review.find('p', {'class': 'reviewText'}).text.strip()
+
+    # can get rating and if it was recommended from same place on the review
+    rating_details = review.find('div', {'class': 'recommended'}).text.strip()
+    review_object['recommended'] = True if 'Recommended' in rating_details else False
+    # get star rating (first digit in the string)
+    rating_index = re.search(r'\d+', rating_details).start()
+    review_object['star_rating'] = int(rating_details[rating_index])
+    return review_object
+
+
+def add_review(review_object):
+    # want to check before adding the review into the database for
+    # duplication purposes, will still display all the reviews in the
+    # response which is why the append above is still being done
+    review_check = db_session.query(Reviews).filter(
+        Reviews.lender_name == review_object['lender_name'],
+        Reviews.title == review_object['title'],
+        Reviews.author == review_object['author'],
+        Reviews.date_of_review == review_object['date_of_review']
+    ).one_or_none()
+    if not review_check:
+        new_review = Reviews(**review_object)
+        db_session.add(new_review)
+        db_session.commit()
+
+
 def get_reviews(url, review_limit):
     reviews_list = []
 
@@ -82,41 +120,10 @@ def get_reviews(url, review_limit):
                 return {"reviews": reviews_list, "status_code": 200}
             else:
                 for review in reviews:
-                    review_object = dict()
-                    review_object['lender_name'] = url.split('/')[5]
-                    review_object['title'] = review.find('p', {'class': 'reviewTitle'}).text.strip()
-                    review_object['author'] = review.find('p', {'class': 'consumerName'}).text.strip()
-
-                    # parse date into datetime object, format is always the same month/year
-                    date_string = review.find(
-                        'p', {'class': 'consumerReviewDate'}).text.split('in ')[1].strip()
-                    review_object['date_of_review'] = parser.parse(date_string, default=default_date)
-
-                    review_object['content'] = review.find('p', {'class': 'reviewText'}).text.strip()
-
-                    # can get rating and if it was recommended from same place on the review
-                    rating_details = review.find('div', {'class': 'recommended'}).text.strip()
-                    review_object['recommended'] = True if 'Recommended' in rating_details else False
-                    # get star rating (first digit in the string)
-                    rating_index = re.search(r'\d+', rating_details).start()
-                    review_object['star_rating'] = int(rating_details[rating_index])
-
+                    review_object = build_review_object(review, url)
                     if len(reviews_list) < review_limit:
                         reviews_list.append(review_object)
-
-                        # want to check before adding the review into the database for
-                        # duplication purposes, will still display all the reviews in the
-                        # response which is why the append above is still being done
-                        review_check = db_session.query(Reviews).filter(
-                            Reviews.lender_name == review_object['lender_name'],
-                            Reviews.title == review_object['title'],
-                            Reviews.author == review_object['author'],
-                            Reviews.date_of_review == review_object['date_of_review']
-                        ).one_or_none()
-                        if not review_check:
-                            new_review = Reviews(**review_object)
-                            db_session.add(new_review)
-                            db_session.commit()
+                        add_review(review_object)
                     else:
                         return {"reviews": reviews_list, "status_code": 200}
                 page += 1
@@ -128,5 +135,4 @@ def get_reviews(url, review_limit):
             # bad url
             if not reviews_list:
                 return {"message": "url not found", "status_code": 404}
-            else:
-                return {"reviews": reviews_list, "status_code": 200}
+            return {"reviews": reviews_list, "status_code": 200}
